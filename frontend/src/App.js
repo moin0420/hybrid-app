@@ -1,22 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import "./App.css";
 
 function App() {
   const [data, setData] = useState([]);
   const [username, setUsername] = useState(localStorage.getItem("username") || "");
   const [tempName, setTempName] = useState("");
+  const [filters, setFilters] = useState({});
+  const [sortConfig, setSortConfig] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
-  const [filter, setFilter] = useState({ client_name: "", job_title: "" });
-  const [saveTimer, setSaveTimer] = useState(null);
 
+  // Fetch data from backend
   const fetchData = async () => {
     try {
       const res = await fetch("/api/requirements");
       const json = await res.json();
       setData(json);
       setLoading(false);
-    } catch {
-      console.error("Fetch error");
+    } catch (err) {
+      console.error("Fetch error:", err);
     }
   };
 
@@ -24,36 +25,35 @@ function App() {
     if (username) fetchData();
   }, [username]);
 
+  // Refresh data every 10s
   useEffect(() => {
     if (!username) return;
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, [username]);
 
-  const updateData = (rowId, field, value) => {
+  // Handle cell updates
+  const updateCell = async (rowId, field, value) => {
     const newData = [...data];
     const row = newData.find((r) => r.id === rowId);
+    if (!row) return;
     row[field] = value;
     setData(newData);
 
-    if (saveTimer) clearTimeout(saveTimer);
-    setSaveTimer(
-      setTimeout(async () => {
-        try {
-          const res = await fetch(`/api/requirements/${rowId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(row),
-          });
-          const result = await res.json();
-          if (result.error) alert(result.error);
-        } catch (err) {
-          console.error(err);
-        }
-      }, 1000)
-    );
+    try {
+      const res = await fetch(`/api/requirements/${rowId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(row),
+      });
+      const result = await res.json();
+      if (result.error) alert(result.error);
+    } catch (err) {
+      console.error("Update error:", err);
+    }
   };
 
+  // Add new row
   const addRow = async () => {
     const newRow = {
       client_name: "",
@@ -64,6 +64,7 @@ function App() {
       assigned_recruiter: "",
       working: "",
     };
+
     try {
       const res = await fetch("/api/requirements", {
         method: "POST",
@@ -72,50 +73,53 @@ function App() {
       });
       const result = await res.json();
       setData((prev) => [...prev, result]);
-    } catch {
-      console.error("Add row error");
+    } catch (err) {
+      console.error("Add row error:", err);
     }
   };
 
+  // Sorting
   const handleSort = (key) => {
     let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") direction = "desc";
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === "asc") {
+      direction = "desc";
+    }
     setSortConfig({ key, direction });
   };
 
-  const sortedData = React.useMemo(() => {
-    if (!sortConfig.key) return data;
+  const sortedData = useMemo(() => {
+    if (!sortConfig) return data;
     return [...data].sort((a, b) => {
       const aV = a[sortConfig.key] ?? "";
       const bV = b[sortConfig.key] ?? "";
-      if (typeof aV === "number") return sortConfig.direction === "asc" ? aV - bV : bV - aV;
+      if (typeof aV === "number" && typeof bV === "number") {
+        return sortConfig.direction === "asc" ? aV - bV : bV - aV;
+      }
       return sortConfig.direction === "asc"
         ? aV.toString().localeCompare(bV.toString())
         : bV.toString().localeCompare(aV.toString());
     });
   }, [data, sortConfig]);
 
+  // Filtering
+  const filteredData = sortedData.filter((row) =>
+    Object.keys(filters).every((key) =>
+      String(row[key] || "")
+        .toLowerCase()
+        .includes(filters[key]?.toLowerCase() || "")
+    )
+  );
+
   if (!username) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          background: "#2563eb",
-          color: "white",
-        }}
-      >
+      <div className="login-container">
         <h2>Enter Your Name</h2>
         <input
-          style={{ padding: "10px", fontSize: "16px", marginBottom: "10px" }}
           value={tempName}
           onChange={(e) => setTempName(e.target.value)}
+          placeholder="Your Name"
         />
         <button
-          style={{ padding: "10px", background: "#facc15", border: "none", cursor: "pointer" }}
           onClick={() => {
             if (tempName.trim() === "") {
               alert("Enter name");
@@ -131,103 +135,130 @@ function App() {
     );
   }
 
+  if (loading) return <p>Loading...</p>;
+
+  const columns = Object.keys(data[0] || {});
+
   return (
-    <div style={{ width: "95%", maxWidth: "1200px", margin: "20px auto", background: "white", padding: "15px", borderRadius: "10px" }}>
-      <h2 style={{ textAlign: "center" }}>Requirements Tracker</h2>
-      <div style={{ marginBottom: "10px" }}>
-        <button onClick={addRow} style={{ marginBottom: "10px" }}>
-          Add Row
-        </button>
+    <div className="app-container">
+      <h2>Requirements Tracker</h2>
+      <button onClick={addRow}>Add Row</button>
+
+      <div className="instructions">
+        <p>1. Enter "Yes" in Working? column to start working on a Requisition.</p>
+        <p>2. To switch Requirements, reset previous row Working? to blank.</p>
       </div>
-      <div style={{ background: "#fef3c7", padding: "10px", borderRadius: "6px", marginBottom: "10px" }}>
-        <p>1. Enter "Yes" in Working? column to start working on a Requisition</p>
-        <p>2. To switch Requirements, reset previous row Working? to blank</p>
-      </div>
-      {loading ? (
-        <p>Loading...</p>
-      ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f3f4f6" }}>
+
+      <div className="table-container">
+        <table>
+          <thead>
             <tr>
-              {["id", "client_name", "requirement_id", "job_title", "status", "slots", "assigned_recruiter", "working"].map((col) => (
-                <th
-                  key={col}
-                  style={{ padding: "8px", borderBottom: "2px solid #e5e7eb", cursor: "pointer" }}
-                  onClick={() => handleSort(col)}
-                >
-                  {col}
+              {columns.map((col) => (
+                <th key={col} onClick={() => handleSort(col)}>
+                  {col}{" "}
+                  {sortConfig?.key === col
+                    ? sortConfig.direction === "asc"
+                      ? "▲"
+                      : "▼"
+                    : ""}
                 </th>
               ))}
             </tr>
             <tr>
-              {["id", "client_name", "requirement_id", "job_title", "status", "slots", "assigned_recruiter", "working"].map((col) => (
+              {columns.map((col) => (
                 <th key={"filter_" + col}>
-                  {["client_name", "job_title"].includes(col) ? (
-                    <input value={filter[col] || ""} onChange={(e) => setFilter({ ...filter, [col]: e.target.value })} />
-                  ) : null}
+                  <input
+                    type="text"
+                    placeholder="Filter..."
+                    value={filters[col] || ""}
+                    onChange={(e) =>
+                      setFilters({ ...filters, [col]: e.target.value })
+                    }
+                  />
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {sortedData
-              .filter(
-                (r) =>
-                  r.client_name.toLowerCase().includes(filter.client_name.toLowerCase()) &&
-                  r.job_title.toLowerCase().includes(filter.job_title.toLowerCase())
-              )
-              .map((row) => {
-                const canEditWorking = row.status === "Open" && row.slots > 0;
-                return (
-                  <tr key={row.id} style={{ background: row.working === "Yes" ? "#fef3c7" : "white" }}>
-                    <td>{row.id}</td>
-                    <td>
-                      <input value={row.client_name} onChange={(e) => updateData(row.id, "client_name", e.target.value)} />
-                    </td>
-                    <td>
-                      <input value={row.requirement_id} onChange={(e) => updateData(row.id, "requirement_id", e.target.value)} />
-                    </td>
-                    <td>
-                      <input value={row.job_title} onChange={(e) => updateData(row.id, "job_title", e.target.value)} />
-                    </td>
-                    <td>
-                      <select value={row.status} onChange={(e) => updateData(row.id, "status", e.target.value)}>
-                        <option>Open</option>
-                        <option>On Hold</option>
-                        <option>Closed</option>
-                        <option>Cancelled</option>
-                        <option>Filled</option>
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        value={row.slots}
-                        onChange={(e) => updateData(row.id, "slots", parseInt(e.target.value) || 0)}
-                      />
-                    </td>
-                    <td>{row.assigned_recruiter}</td>
-                    <td>
-                      {canEditWorking ? (
+            {filteredData.map((row) => {
+              const canEditWorking = row.status === "Open" && row.slots > 0;
+              return (
+                <tr key={row.id}>
+                  {columns.map((col) => {
+                    if (col === "status") {
+                      return (
+                        <td key={col}>
+                          <select
+                            value={row[col]}
+                            onChange={(e) =>
+                              updateCell(row.id, col, e.target.value)
+                            }
+                          >
+                            <option>Open</option>
+                            <option>On Hold</option>
+                            <option>Closed</option>
+                            <option>Cancelled</option>
+                            <option>Filled</option>
+                          </select>
+                        </td>
+                      );
+                    }
+                    if (col === "slots") {
+                      return (
+                        <td key={col}>
+                          <input
+                            type="number"
+                            value={row[col]}
+                            onChange={(e) =>
+                              updateCell(row.id, col, parseInt(e.target.value) || 0)
+                            }
+                          />
+                        </td>
+                      );
+                    }
+                    if (col === "working") {
+                      return (
+                        <td key={col}>
+                          {canEditWorking ? (
+                            <input
+                              value={row[col] || ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                updateCell(row.id, "working", val);
+                                if (val.toLowerCase() === "yes") {
+                                  updateCell(row.id, "assigned_recruiter", username);
+                                } else if (
+                                  row.working === "Yes" &&
+                                  val.toLowerCase() !== "yes"
+                                ) {
+                                  updateCell(row.id, "assigned_recruiter", "");
+                                }
+                              }}
+                            />
+                          ) : (
+                            "Non-Workable"
+                          )}
+                        </td>
+                      );
+                    }
+                    if (col === "id" || col === "assigned_recruiter") {
+                      return <td key={col}>{row[col]}</td>;
+                    }
+                    return (
+                      <td key={col}>
                         <input
-                          value={row.working || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            updateData(row.id, "working", val);
-                            if (val.toLowerCase() === "yes") updateData(row.id, "assigned_recruiter", username);
-                            if (row.working === "Yes" && val.toLowerCase() !== "yes") updateData(row.id, "assigned_recruiter", "");
-                          }}
+                          value={row[col] || ""}
+                          onChange={(e) => updateCell(row.id, col, e.target.value)}
                         />
-                      ) : (
-                        "Non-Workable"
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-      )}
+      </div>
     </div>
   );
 }
