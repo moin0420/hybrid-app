@@ -1,17 +1,25 @@
+// backend/app.js
 import express from "express";
-import bodyParser from "body-parser";
+import pg from "pg";
 import cors from "cors";
-import pkg from "pg";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const { Pool } = pkg;
+dotenv.config();
+
 const app = express();
-const PORT = process.env.PORT || 5000;
-
-// Middleware
-app.use(bodyParser.json());
 app.use(cors());
+app.use(express.json());
 
-// Database setup
+// ================== Database Config ==================
+const { Pool } = pg;
+
+if (!process.env.DB_URL) {
+  console.error("❌ Missing DB_URL in environment variables!");
+  process.exit(1);
+}
+
 const pool = new Pool({
   connectionString: process.env.DB_URL,
   ssl: process.env.DB_URL.includes("render")
@@ -19,92 +27,71 @@ const pool = new Pool({
     : false,
 });
 
-// Initialize DB
-async function initializeDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS requisitions (
-      id SERIAL PRIMARY KEY,
-      title TEXT,
-      department TEXT,
-      location TEXT,
-      working TEXT DEFAULT '',
-      assigned_recruiter TEXT DEFAULT ''
-    )
-  `);
-  console.log("✅ Database initialized");
-}
-initializeDB();
+// Test DB connection
+(async () => {
+  try {
+    const client = await pool.connect();
+    console.log("✅ Connected to PostgreSQL database");
+    client.release();
+  } catch (err) {
+    console.error("❌ Database connection failed:", err);
+    process.exit(1);
+  }
+})();
 
-// ----------------------
-// API Endpoints
-// ----------------------
-
-// Get all requisitions
+// ================== API Routes ==================
 app.get("/api/requisitions", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM requisitions ORDER BY id ASC");
+    const result = await pool.query("SELECT * FROM requisitions");
     res.json(result.rows);
   } catch (err) {
-    console.error("Error fetching requisitions:", err);
-    res.status(500).json({ error: "Database error" });
+    console.error("❌ Error fetching requisitions:", err);
+    res.status(500).json({ error: "Failed to fetch requisitions" });
   }
 });
 
-// Update a requisition row
-app.put("/api/requisitions/:id", async (req, res) => {
+app.post("/api/requisitions/:id/update", async (req, res) => {
   const { id } = req.params;
-  let { title, department, location, working, assigned_recruiter, user } = req.body;
+  const { working, assigned_recruiter } = req.body;
 
   try {
-    // Normalize working value (case-insensitive)
-    if (working) {
-      working = working.toLowerCase() === "yes" ? "Yes" : working;
+    // Case-insensitive check for "yes"
+    let normalizedWorking = null;
+    if (typeof working === "string" && working.trim().toLowerCase() === "yes") {
+      normalizedWorking = "Yes";
+    } else if (working && working.trim() !== "") {
+      normalizedWorking = working.trim();
     }
 
-    // If user tries to set "Yes"
-    if (working && working.toLowerCase() === "yes") {
-      // Check if this user already has another requisition marked "Yes"
-      const check = await pool.query(
-        `SELECT * FROM requisitions 
-         WHERE working = 'Yes' AND assigned_recruiter = $1 AND id != $2`,
-        [user, id]
-      );
+    const query = `
+      UPDATE requisitions
+      SET working = $1, assigned_recruiter = $2
+      WHERE id = $3
+      RETURNING *;
+    `;
 
-      if (check.rows.length > 0) {
-        return res.status(400).json({
-          error: "You're already working on another requisition. Please mark it free and try again.",
-        });
-      }
-
-      // Assign recruiter if valid
-      assigned_recruiter = user;
-    }
-
-    // If user sets "Non-Workable", reset recruiter
-    if (working && working.toLowerCase() === "non-workable") {
-      assigned_recruiter = "";
-    }
-
-    // If user clears "Yes" -> reset recruiter
-    if (!working || working === "") {
-      assigned_recruiter = "";
-    }
-
-    const result = await pool.query(
-      `UPDATE requisitions
-       SET title = $1, department = $2, location = $3, working = $4, assigned_recruiter = $5
-       WHERE id = $6 RETURNING *`,
-      [title, department, location, working || "", assigned_recruiter || "", id]
-    );
+    const values = [normalizedWorking, assigned_recruiter || null, id];
+    const result = await pool.query(query, values);
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("Error updating requisition:", err);
-    res.status(500).json({ error: "Database update failed" });
+    console.error("❌ Error updating requisition:", err);
+    res.status(500).json({ error: "Failed to update requisition" });
   }
 });
 
-// Start server
+// ================== Serve React Frontend ==================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(express.static(path.join(__dirname, "../frontend/build")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/build", "index.html"));
+});
+
+// ================== Start Server ==================
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running at http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
