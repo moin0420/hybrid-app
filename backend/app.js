@@ -1,8 +1,7 @@
+// backend/app.js
 import express from "express";
-import sqlite3 from "sqlite3";
-import { open } from "sqlite";
 import cors from "cors";
-import path from "path";
+import sqlite3 from "sqlite3";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -13,106 +12,112 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Database init
-const dbPromise = open({
-  filename: path.join(process.cwd(), "requirements.db"),
-  driver: sqlite3.Database,
+// Initialize SQLite database
+const db = new sqlite3.Database("./database.db", (err) => {
+  if (err) console.error("DB connection error:", err.message);
+  else console.log("Connected to SQLite database.");
 });
 
 // Create table if not exists
-(async () => {
-  const db = await dbPromise;
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS requirements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_name TEXT,
-      requirement_id TEXT,
-      job_title TEXT,
-      status TEXT,
-      slots INTEGER,
-      assigned_recruiter TEXT,
-      working TEXT
-    )
-  `);
-})();
+db.run(
+  `CREATE TABLE IF NOT EXISTS requirements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_name TEXT,
+    requirement_id TEXT,
+    job_title TEXT,
+    status TEXT,
+    slots INTEGER,
+    assigned_recruiter TEXT,
+    working TEXT
+  )`,
+  (err) => {
+    if (err) console.error(err.message);
+  }
+);
 
-// ✅ GET all requirements
-app.get("/api/requirements", async (req, res) => {
-  const db = await dbPromise;
-  const rows = await db.all("SELECT * FROM requirements");
-  res.json(rows);
+// Get all requirements
+app.get("/api/requirements", (req, res) => {
+  db.all("SELECT * FROM requirements", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
 });
 
-// ✅ POST new requirement
-app.post("/api/requirements", async (req, res) => {
-  const db = await dbPromise;
+// Add a new requirement
+app.post("/api/requirements", (req, res) => {
   const { client_name, requirement_id, job_title, status, slots, assigned_recruiter, working } = req.body;
-
-  const result = await db.run(
-    `INSERT INTO requirements 
-     (client_name, requirement_id, job_title, status, slots, assigned_recruiter, working)
+  db.run(
+    `INSERT INTO requirements (client_name, requirement_id, job_title, status, slots, assigned_recruiter, working)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [client_name, requirement_id, job_title, status, slots, assigned_recruiter || "", working || ""]
+    [client_name, requirement_id, job_title, status, slots, assigned_recruiter, working],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      db.get("SELECT * FROM requirements WHERE id = ?", [this.lastID], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(row);
+      });
+    }
   );
-
-  const newRow = await db.get("SELECT * FROM requirements WHERE id = ?", result.lastID);
-  res.json(newRow);
 });
 
-// ✅ PUT update a requirement
-app.put("/api/requirements/:id", async (req, res) => {
-  const db = await dbPromise;
+// Update a requirement
+app.put("/api/requirements/:id", (req, res) => {
   const { id } = req.params;
   const { client_name, requirement_id, job_title, status, slots, assigned_recruiter, working } = req.body;
 
-  // Normalize working value
-  let finalWorking = working?.trim().toLowerCase() === "yes" ? "Yes" : "";
-
-  let finalRecruiter = assigned_recruiter || "";
-
-  if (finalWorking === "Yes") {
-    // Check if same recruiter already working on another requisition
-    const conflict = await db.get(
-      `SELECT * FROM requirements 
-       WHERE working = 'Yes' 
-       AND assigned_recruiter = ? 
-       AND id != ?`,
-      [assigned_recruiter, id]
+  // Handle working rules: only one row per user can have "Yes"
+  if (working && working.toLowerCase() === "yes") {
+    db.get(
+      "SELECT * FROM requirements WHERE assigned_recruiter = ? AND working = 'Yes'",
+      [assigned_recruiter],
+      (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (row && row.id != id) {
+          return res.status(400).json({
+            error: "You're already working on another requisition. Please mark it free and try again."
+          });
+        } else {
+          updateRow();
+        }
+      }
     );
-    if (conflict) {
-      return res.status(400).json({
-        error: "You're already working on another requisition. Please mark it free and try again.",
-      });
-    }
-    finalRecruiter = assigned_recruiter;
   } else {
-    // Reset recruiter if not working
-    finalRecruiter = "";
+    updateRow();
   }
 
-  // If non-workable (Closed, Cancelled, Filled, slots <= 0) → reset recruiter
-  const nonWorkable = ["Closed", "Cancelled", "Filled"].includes(status) || slots <= 0;
-  if (nonWorkable) {
-    finalWorking = "";
-    finalRecruiter = "";
+  function updateRow() {
+    db.run(
+      `UPDATE requirements SET
+        client_name = ?,
+        requirement_id = ?,
+        job_title = ?,
+        status = ?,
+        slots = ?,
+        assigned_recruiter = ?,
+        working = ?
+       WHERE id = ?`,
+      [
+        client_name,
+        requirement_id,
+        job_title,
+        status,
+        slots,
+        assigned_recruiter && working && working.toLowerCase() === "yes" ? assigned_recruiter : "",
+        working && working.toLowerCase() === "yes" ? "Yes" : "",
+        id
+      ],
+      function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        db.get("SELECT * FROM requirements WHERE id = ?", [id], (err, row) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json(row);
+        });
+      }
+    );
   }
-
-  await db.run(
-    `UPDATE requirements 
-     SET client_name = ?, requirement_id = ?, job_title = ?, status = ?, slots = ?, assigned_recruiter = ?, working = ?
-     WHERE id = ?`,
-    [client_name, requirement_id, job_title, status, slots, finalRecruiter, finalWorking, id]
-  );
-
-  const updatedRow = await db.get("SELECT * FROM requirements WHERE id = ?", id);
-  res.json(updatedRow);
 });
 
-// Root test
-app.get("/", (req, res) => {
-  res.send("Backend is running 🚀");
-});
-
+// Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Backend running at http://localhost:${PORT}`);
 });
