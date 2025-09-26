@@ -1,117 +1,110 @@
-// ------------------------------
-// app.js (Backend Entry Point)
-// ------------------------------
-
 import express from "express";
+import bodyParser from "body-parser";
 import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
 import pkg from "pg";
 
 const { Pool } = pkg;
 const app = express();
+const PORT = process.env.PORT || 5000;
 
-// ------------------------------
 // Middleware
-// ------------------------------
+app.use(bodyParser.json());
 app.use(cors());
-app.use(express.json());
 
-// ------------------------------
-// Database Connection
-// ------------------------------
+// Database setup
 const pool = new Pool({
   connectionString: process.env.DB_URL,
-  ssl: process.env.DB_URL?.includes("render")
+  ssl: process.env.DB_URL.includes("render")
     ? { rejectUnauthorized: false }
     : false,
 });
 
-// ------------------------------
-// API Routes
-// ------------------------------
+// Initialize DB
+async function initializeDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS requisitions (
+      id SERIAL PRIMARY KEY,
+      title TEXT,
+      department TEXT,
+      location TEXT,
+      working TEXT DEFAULT '',
+      assigned_recruiter TEXT DEFAULT ''
+    )
+  `);
+  console.log("✅ Database initialized");
+}
+initializeDB();
 
-// Fetch all requirements
-app.get("/api/requirements", async (req, res) => {
+// ----------------------
+// API Endpoints
+// ----------------------
+
+// Get all requisitions
+app.get("/api/requisitions", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM requirements ORDER BY id ASC");
+    const result = await pool.query("SELECT * FROM requisitions ORDER BY id ASC");
     res.json(result.rows);
   } catch (err) {
-    console.error("❌ Error fetching requirements:", err);
-    res.status(500).json({ error: "DB fetch failed" });
+    console.error("Error fetching requisitions:", err);
+    res.status(500).json({ error: "Database error" });
   }
 });
 
-// Insert a new requirement
-app.post("/api/requirements", async (req, res) => {
+// Update a requisition row
+app.put("/api/requisitions/:id", async (req, res) => {
+  const { id } = req.params;
+  let { title, department, location, working, assigned_recruiter, user } = req.body;
+
   try {
-    const {
-      client_name,
-      requirement_id,
-      job_title,
-      status,
-      slots,
-      assigned_recruiter,
-      working,
-    } = req.body;
+    // Normalize working value (case-insensitive)
+    if (working) {
+      working = working.toLowerCase() === "yes" ? "Yes" : working;
+    }
+
+    // If user tries to set "Yes"
+    if (working && working.toLowerCase() === "yes") {
+      // Check if this user already has another requisition marked "Yes"
+      const check = await pool.query(
+        `SELECT * FROM requisitions 
+         WHERE working = 'Yes' AND assigned_recruiter = $1 AND id != $2`,
+        [user, id]
+      );
+
+      if (check.rows.length > 0) {
+        return res.status(400).json({
+          error: "You're already working on another requisition. Please mark it free and try again.",
+        });
+      }
+
+      // Assign recruiter if valid
+      assigned_recruiter = user;
+    }
+
+    // If user sets "Non-Workable", reset recruiter
+    if (working && working.toLowerCase() === "non-workable") {
+      assigned_recruiter = "";
+    }
+
+    // If user clears "Yes" -> reset recruiter
+    if (!working || working === "") {
+      assigned_recruiter = "";
+    }
 
     const result = await pool.query(
-      `INSERT INTO requirements 
-       (client_name, requirement_id, job_title, status, slots, assigned_recruiter, working) 
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [client_name, requirement_id, job_title, status, slots, assigned_recruiter, working]
+      `UPDATE requisitions
+       SET title = $1, department = $2, location = $3, working = $4, assigned_recruiter = $5
+       WHERE id = $6 RETURNING *`,
+      [title, department, location, working || "", assigned_recruiter || "", id]
     );
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("❌ Error inserting requirement:", err);
-    res.status(500).json({ error: "Insert failed" });
+    console.error("Error updating requisition:", err);
+    res.status(500).json({ error: "Database update failed" });
   }
 });
 
-// Update an existing requirement
-app.put("/api/requirements/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const fields = req.body;
-
-    if (!Object.keys(fields).length) {
-      return res.status(400).json({ error: "No fields to update" });
-    }
-
-    const keys = Object.keys(fields);
-    const values = Object.values(fields);
-    const setClause = keys.map((k, i) => `${k}=$${i + 1}`).join(", ");
-
-    const query = `UPDATE requirements SET ${setClause} WHERE id=${id} RETURNING *`;
-    const result = await pool.query(query, values);
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error("❌ Error updating requirement:", err);
-    res.status(500).json({ error: "Update failed" });
-  }
-});
-
-// ------------------------------
-// Serve Frontend in Production
-// ------------------------------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-if (process.env.NODE_ENV === "production") {
-  const frontendPath = path.join(__dirname, "../frontend/build");
-  app.use(express.static(frontendPath));
-
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(frontendPath, "index.html"));
-  });
-}
-
-// ------------------------------
-// Start Server
-// ------------------------------
-const PORT = process.env.PORT || 5000;
+// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running on port ${PORT}`);
+  console.log(`🚀 Backend running at http://localhost:${PORT}`);
 });
