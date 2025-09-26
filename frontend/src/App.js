@@ -1,155 +1,95 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import "./App.css";
 
 function App() {
   const [data, setData] = useState([]);
-  const [username, setUsername] = useState(localStorage.getItem("username") || "");
-  const [tempName, setTempName] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
-  const [filter, setFilter] = useState({});
-  const [saveTimer, setSaveTimer] = useState(null);
+  const [filters, setFilters] = useState({});
 
   const fetchData = async () => {
-    try {
-      const res = await fetch("/api/requirements");
-      const json = await res.json();
-      setData(json);
-      setLoading(false);
-    } catch { console.error("Fetch error"); }
+    const res = await fetch("http://localhost:5000/api/requirements");
+    const rows = await res.json();
+    setData(rows);
   };
 
-  useEffect(() => { if (username) fetchData(); }, [username]);
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  const updateData = (rowId, field, value) => {
-    const newData = [...data];
-    const row = newData.find(r => r.id === rowId);
+  const handleFilterChange = (col, value) => {
+    setFilters({ ...filters, [col]: value });
+  };
 
-    // Working field logic
-    if (field === "working") {
-      const val = value.trim().toLowerCase();
-      if (val === "yes") {
-        // Check if user already has a Yes row
-        const existing = newData.find(r => r.working === "Yes" && r.assigned_recruiter === username);
-        if (existing && existing.id !== rowId) {
-          alert("You're already working on another requisition. Please mark it free and try again.");
-          return;
-        }
-        row.working = "Yes";
-        row.assigned_recruiter = username;
-      } else {
-        row.working = "";
-        row.assigned_recruiter = "";
-      }
-    } else {
-      row[field] = value;
+  const filteredData = data.filter((row) =>
+    Object.keys(filters).every((col) =>
+      String(row[col]).toLowerCase().includes(String(filters[col] || "").toLowerCase())
+    )
+  );
+
+  const handleCellChange = async (id, col, value, assigned_recruiter) => {
+    const updated = { ...data.find((d) => d.id === id), [col]: value };
+    if (col === "working") {
+      updated.working = value.toLowerCase() === "yes" ? "Yes" : "";
+      if (updated.working === "") updated.assigned_recruiter = "";
+      else updated.assigned_recruiter = assigned_recruiter || "You";
     }
-
-    setData(newData);
-
-    if (saveTimer) clearTimeout(saveTimer);
-    setSaveTimer(setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/requirements/${rowId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(row),
-        });
-        const result = await res.json();
-        if (result.error) alert(result.error);
-      } catch (err) { console.error(err); }
-    }, 1000));
-  };
-
-  const addRow = async () => {
-    const newRow = { client_name:"", requirement_id:"", job_title:"", status:"Open", slots:1, assigned_recruiter:"", working:"" };
     try {
-      const res = await fetch("/api/requirements", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(newRow) });
-      const result = await res.json();
-      setData(prev => [...prev, result]);
-    } catch { console.error("Add row error"); }
+      const res = await fetch(`http://localhost:5000/api/requirements/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+      const updatedRow = await res.json();
+      if (res.status === 400) alert(updatedRow.error);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
   };
-
-  const handleSort = key => {
-    let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") direction = "desc";
-    setSortConfig({ key, direction });
-  };
-
-  const sortedData = React.useMemo(() => {
-    if (!sortConfig.key) return data;
-    return [...data].sort((a,b) => {
-      const aV = a[sortConfig.key] ?? "";
-      const bV = b[sortConfig.key] ?? "";
-      if (typeof aV === "number") return sortConfig.direction==="asc"?aV-bV:bV-aV;
-      return sortConfig.direction==="asc"?aV.toString().localeCompare(bV.toString()):bV.toString().localeCompare(aV.toString());
-    });
-  }, [data, sortConfig]);
-
-  if (!username) {
-    return (
-      <div className="login-container">
-        <h2>Enter Your Name</h2>
-        <input value={tempName} onChange={e=>setTempName(e.target.value)} />
-        <button onClick={()=>{
-          if(tempName.trim()===""){alert("Enter name"); return;}
-          localStorage.setItem("username",tempName);
-          setUsername(tempName);
-        }}>Login</button>
-      </div>
-    );
-  }
 
   return (
-    <div className="app-container">
-      <h2>Requirements Tracker</h2>
-      <button onClick={addRow}>Add Row</button>
-      <table>
-        <thead>
-          <tr>
-            {["id","client_name","requirement_id","job_title","status","slots","assigned_recruiter","working"].map(col=>(
-              <th key={col} onClick={()=>handleSort(col)}>
-                {col}
-              </th>
-            ))}
-          </tr>
-          <tr>
-            {["id","client_name","requirement_id","job_title","status","slots","assigned_recruiter","working"].map(col=>(
-              <th key={"filter_"+col}>
-                <input placeholder={`Filter ${col}`} value={filter[col]||""} onChange={e=>setFilter({...filter,[col]:e.target.value})} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sortedData
-            .filter(r => Object.keys(filter).every(f => (r[f]+"").toLowerCase().includes((filter[f]||"").toLowerCase())))
-            .map(row=>{
-              const canEditWorking = row.status==="Open" && row.slots>0;
-              return (
-                <tr key={row.id} className={row.working==="Yes"?"working-row":""}>
-                  <td>{row.id}</td>
-                  <td><input value={row.client_name} onChange={e=>updateData(row.id,"client_name",e.target.value)} /></td>
-                  <td><input value={row.requirement_id} onChange={e=>updateData(row.id,"requirement_id",e.target.value)} /></td>
-                  <td><input value={row.job_title} onChange={e=>updateData(row.id,"job_title",e.target.value)} /></td>
-                  <td>
-                    <select value={row.status} onChange={e=>updateData(row.id,"status",e.target.value)}>
-                      {["Open","On Hold","Closed","Cancelled","Filled"].map(s=><option key={s}>{s}</option>)}
-                    </select>
+    <div className="App">
+      <h1>Requirements</h1>
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              {data[0] &&
+                Object.keys(data[0]).map((col) => (
+                  <th key={col}>
+                    {col}
+                    <input
+                      type="text"
+                      placeholder="Filter..."
+                      value={filters[col] || ""}
+                      onChange={(e) => handleFilterChange(col, e.target.value)}
+                    />
+                  </th>
+                ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredData.map((row) => (
+              <tr key={row.id}>
+                {Object.keys(row).map((col) => (
+                  <td key={col}>
+                    {col === "working" || col === "assigned_recruiter" ? (
+                      <input
+                        type="text"
+                        value={row[col]}
+                        onChange={(e) =>
+                          handleCellChange(row.id, col, e.target.value, row.assigned_recruiter)
+                        }
+                      />
+                    ) : (
+                      row[col]
+                    )}
                   </td>
-                  <td><input type="number" value={row.slots} onChange={e=>updateData(row.id,"slots",parseInt(e.target.value)||0)} /></td>
-                  <td>{row.assigned_recruiter}</td>
-                  <td>
-                    {canEditWorking?
-                      <input value={row.working} onChange={e=>updateData(row.id,"working",e.target.value)} />
-                      :"Non-Workable"
-                    }
-                  </td>
-                </tr>
-              )
-          })}
-        </tbody>
-      </table>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
