@@ -1,7 +1,5 @@
 body {
-  margin: 0;
   font-family: Arial, sans-serif;
-  background: #f3f4f6;
 }
 
 .app-container {
@@ -9,8 +7,9 @@ body {
   max-width: 1200px;
   margin: 20px auto;
   background: white;
-  padding: 20px;
+  padding: 15px;
   border-radius: 10px;
+  overflow-x: auto;
 }
 
 .login-container {
@@ -23,55 +22,26 @@ body {
   color: white;
 }
 
-.login-container input {
-  padding: 10px;
-  font-size: 16px;
-  margin-bottom: 10px;
-}
-
-.login-container button {
-  padding: 10px 15px;
-  background: #facc15;
-  border: none;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.instructions {
-  background: #fef3c7;
-  padding: 10px;
-  border-radius: 6px;
-  margin-bottom: 10px;
-}
-
-.table-container {
-  width: 100%;
-  overflow-x: auto; /* prevents overflow */
-}
-
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
 }
 
-th,
-td {
-  border: 1px solid #ddd;
+th, td {
   padding: 8px;
-  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 th {
   cursor: pointer;
-  background: #f9fafb;
-  position: sticky;
-  top: 0;
-  z-index: 2;
 }
 
-input,
-select {
-  width: 100%;
+input {
+  width: 90%;
+  padding: 5px;
   box-sizing: border-box;
+}
+
+.working-row {
+  background-color: #fef3c7;
 }
