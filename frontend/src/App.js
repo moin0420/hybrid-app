@@ -20,6 +20,7 @@ function App() {
     "working",
   ];
 
+  // Fetch data
   const fetchData = async () => {
     try {
       const res = await fetch("/api/requirements");
@@ -27,7 +28,7 @@ function App() {
       setData(json);
       setLoading(false);
     } catch (err) {
-      console.error("Fetch error", err);
+      console.error("Fetch error:", err);
     }
   };
 
@@ -41,26 +42,33 @@ function App() {
     return () => clearInterval(interval);
   }, [username]);
 
+  // Update a row field
   const updateData = (rowId, field, value) => {
     const newData = [...data];
     const row = newData.find((r) => r.id === rowId);
-
     if (!row) return;
 
-    // Handle Working column special rules
+    // Business logic for "working"
     if (field === "working") {
-      const val = value.trim().toLowerCase() === "yes" ? "Yes" : "";
-      row[field] = val;
+      const val = value.trim().toLowerCase();
 
-      if (val === "Yes") {
+      if (val === "yes") {
+        // Check if user is already working elsewhere
+        const alreadyWorking = newData.some(
+          (r) => r.working === "Yes" && r.assigned_recruiter === username && r.id !== rowId
+        );
+        if (alreadyWorking) {
+          alert("You're already working on another requisition. Please mark it free and try again.");
+          return;
+        }
+
+        // Set working to Yes and assign recruiter
+        row.working = "Yes";
         row.assigned_recruiter = username;
       } else {
-        row.assigned_recruiter = "";
-      }
-    } else if (field === "status") {
-      row[field] = value;
-      if (value !== "Open" || row.slots <= 0) {
+        // Reset working
         row.working = "";
+        // If non-workable OR cleared, reset recruiter
         row.assigned_recruiter = "";
       }
     } else {
@@ -81,12 +89,13 @@ function App() {
           const result = await res.json();
           if (result.error) alert(result.error);
         } catch (err) {
-          console.error(err);
+          console.error("Save error:", err);
         }
-      }, 500)
+      }, 1000)
     );
   };
 
+  // Add a new row
   const addRow = async () => {
     const newRow = {
       client_name: "",
@@ -105,14 +114,17 @@ function App() {
       });
       const result = await res.json();
       setData((prev) => [...prev, result]);
-    } catch {
-      console.error("Add row error");
+    } catch (err) {
+      console.error("Add row error:", err);
     }
   };
 
+  // Sorting
   const handleSort = (key) => {
     let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") direction = "desc";
+    if (sortConfig.key === key && sortConfig.direction === "asc") {
+      direction = "desc";
+    }
     setSortConfig({ key, direction });
   };
 
@@ -121,23 +133,22 @@ function App() {
     return [...data].sort((a, b) => {
       const aV = a[sortConfig.key] ?? "";
       const bV = b[sortConfig.key] ?? "";
-      if (typeof aV === "number")
-        return sortConfig.direction === "asc" ? aV - bV : bV - aV;
+      if (typeof aV === "number") return sortConfig.direction === "asc" ? aV - bV : bV - aV;
       return sortConfig.direction === "asc"
         ? aV.toString().localeCompare(bV.toString())
         : bV.toString().localeCompare(aV.toString());
     });
   }, [data, sortConfig]);
 
+  // Filtered Data
   const filteredData = sortedData.filter((row) =>
-    columns.every((col) =>
-      (row[col] ?? "")
-        .toString()
-        .toLowerCase()
-        .includes((filter[col] ?? "").toLowerCase())
-    )
+    columns.every((col) => {
+      const f = filter[col] || "";
+      return row[col]?.toString().toLowerCase().includes(f.toLowerCase());
+    })
   );
 
+  // Login screen
   if (!username) {
     return (
       <div
@@ -158,12 +169,7 @@ function App() {
           onChange={(e) => setTempName(e.target.value)}
         />
         <button
-          style={{
-            padding: "10px",
-            background: "#facc15",
-            border: "none",
-            cursor: "pointer",
-          }}
+          style={{ padding: "10px", background: "#facc15", border: "none", cursor: "pointer" }}
           onClick={() => {
             if (tempName.trim() === "") {
               alert("Enter name");
@@ -197,133 +203,88 @@ function App() {
           Add Row
         </button>
       </div>
-      <div
-        style={{
-          background: "#fef3c7",
-          padding: "10px",
-          borderRadius: "6px",
-          marginBottom: "10px",
-        }}
-      >
+      <div style={{ background: "#fef3c7", padding: "10px", borderRadius: "6px", marginBottom: "10px" }}>
         <p>1. Enter "Yes" in Working? column to start working on a Requisition</p>
-        <p>2. To switch Requirements, reset previous row Working? to blank</p>
+        <p>2. You can only work on one requisition at a time.</p>
       </div>
       {loading ? (
         <p>Loading...</p>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead style={{ background: "#f3f4f6" }}>
-              <tr>
-                {columns.map((col) => (
-                  <th
-                    key={col}
-                    style={{
-                      padding: "8px",
-                      borderBottom: "2px solid #e5e7eb",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => handleSort(col)}
-                  >
-                    {col}
-                  </th>
-                ))}
-              </tr>
-              <tr>
-                {columns.map((col) => (
-                  <th key={"filter_" + col}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f3f4f6" }}>
+            <tr>
+              {columns.map((col) => (
+                <th
+                  key={col}
+                  style={{ padding: "8px", borderBottom: "2px solid #e5e7eb", cursor: "pointer" }}
+                  onClick={() => handleSort(col)}
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              {columns.map((col) => (
+                <th key={"filter_" + col}>
+                  <input
+                    placeholder="Filter..."
+                    value={filter[col] || ""}
+                    onChange={(e) => setFilter({ ...filter, [col]: e.target.value })}
+                  />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredData.map((row) => {
+              const canEditWorking = row.status === "Open" && row.slots > 0;
+              return (
+                <tr key={row.id} style={{ background: row.working === "Yes" ? "#fef3c7" : "white" }}>
+                  <td>{row.id}</td>
+                  <td>
+                    <input value={row.client_name} onChange={(e) => updateData(row.id, "client_name", e.target.value)} />
+                  </td>
+                  <td>
                     <input
-                      placeholder="Filter..."
-                      value={filter[col] || ""}
-                      onChange={(e) =>
-                        setFilter({ ...filter, [col]: e.target.value })
-                      }
+                      value={row.requirement_id}
+                      onChange={(e) => updateData(row.id, "requirement_id", e.target.value)}
                     />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.map((row) => {
-                const canEditWorking = row.status === "Open" && row.slots > 0;
-                return (
-                  <tr
-                    key={row.id}
-                    style={{
-                      background: row.working === "Yes" ? "#fef3c7" : "white",
-                    }}
-                  >
-                    <td>{row.id}</td>
-                    <td>
+                  </td>
+                  <td>
+                    <input value={row.job_title} onChange={(e) => updateData(row.id, "job_title", e.target.value)} />
+                  </td>
+                  <td>
+                    <select value={row.status} onChange={(e) => updateData(row.id, "status", e.target.value)}>
+                      <option>Open</option>
+                      <option>On Hold</option>
+                      <option>Closed</option>
+                      <option>Cancelled</option>
+                      <option>Filled</option>
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      value={row.slots}
+                      onChange={(e) => updateData(row.id, "slots", parseInt(e.target.value) || 0)}
+                    />
+                  </td>
+                  <td>{row.assigned_recruiter}</td>
+                  <td>
+                    {canEditWorking ? (
                       <input
-                        value={row.client_name}
-                        onChange={(e) =>
-                          updateData(row.id, "client_name", e.target.value)
-                        }
+                        value={row.working || ""}
+                        onChange={(e) => updateData(row.id, "working", e.target.value)}
                       />
-                    </td>
-                    <td>
-                      <input
-                        value={row.requirement_id}
-                        onChange={(e) =>
-                          updateData(row.id, "requirement_id", e.target.value)
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={row.job_title}
-                        onChange={(e) =>
-                          updateData(row.id, "job_title", e.target.value)
-                        }
-                      />
-                    </td>
-                    <td>
-                      <select
-                        value={row.status}
-                        onChange={(e) =>
-                          updateData(row.id, "status", e.target.value)
-                        }
-                      >
-                        <option>Open</option>
-                        <option>On Hold</option>
-                        <option>Closed</option>
-                        <option>Cancelled</option>
-                        <option>Filled</option>
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        value={row.slots}
-                        onChange={(e) =>
-                          updateData(
-                            row.id,
-                            "slots",
-                            parseInt(e.target.value) || 0
-                          )
-                        }
-                      />
-                    </td>
-                    <td>{row.assigned_recruiter}</td>
-                    <td>
-                      {canEditWorking ? (
-                        <input
-                          value={row.working || ""}
-                          onChange={(e) =>
-                            updateData(row.id, "working", e.target.value)
-                          }
-                        />
-                      ) : (
-                        "Non-Workable"
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    ) : (
+                      "Non-Workable"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   );
